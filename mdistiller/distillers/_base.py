@@ -4,10 +4,43 @@ import torch.nn.functional as F
 
 
 class Distiller(nn.Module):
-    def __init__(self, student, teacher):
+    def __init__(self, student, teacher, teacher_weights=None):
         super(Distiller, self).__init__()
         self.student = student
-        self.teacher = teacher
+
+        if isinstance(teacher, nn.ModuleList):
+            teacher_modules = list(teacher)
+        elif isinstance(teacher, (list, tuple)):
+            teacher_modules = list(teacher)
+        else:
+            teacher_modules = [teacher]
+
+        if len(teacher_modules) == 0:
+            raise ValueError("At least one teacher network must be provided.")
+
+        self.teachers = nn.ModuleList(teacher_modules)
+        # keep the original attribute name for backward compatibility
+        self.teacher = self.teachers[0]
+        self._num_teachers = len(self.teachers)
+
+        if teacher_weights is None or len(teacher_weights) == 0:
+            processed_weights = [1.0] * self._num_teachers
+        else:
+            processed_weights = [float(w) for w in list(teacher_weights)]
+
+        if len(processed_weights) != self._num_teachers:
+            raise ValueError(
+                "The number of teacher weights must match the number of teachers."
+            )
+
+        weight_sum = sum(processed_weights)
+        if weight_sum <= 0:
+            raise ValueError("The sum of teacher weights must be positive.")
+
+        normalized_weights = [w / weight_sum for w in processed_weights]
+        self.register_buffer(
+            "_teacher_weights", torch.tensor(normalized_weights, dtype=torch.float32)
+        )
 
     def train(self, mode=True):
         # teacher as eval mode by default
@@ -16,8 +49,17 @@ class Distiller(nn.Module):
         self.training = mode
         for module in self.children():
             module.train(mode)
-        self.teacher.eval()
+        for teacher in self.teachers:
+            teacher.eval()
         return self
+
+    @property
+    def teacher_weights(self):
+        return self._teacher_weights
+
+    @property
+    def num_teachers(self):
+        return self._num_teachers
 
     def get_learnable_parameters(self):
         # if the method introduces extra parameters, re-impl this function
