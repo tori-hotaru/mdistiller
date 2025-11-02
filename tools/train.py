@@ -52,21 +52,48 @@ def main(cfg, resume, opts):
         distiller = distiller_dict[cfg.DISTILLER.TYPE](model_student)
     # distillation
     else:
-        print(log_msg("Loading teacher model", "INFO"))
+        teacher_names = list(cfg.DISTILLER.TEACHERS)
+        if len(teacher_names) == 0:
+            teacher_names = [cfg.DISTILLER.TEACHER]
+
+        print(
+            log_msg(
+                "Loading teacher model(s): {}".format(
+                    ", ".join(teacher_names)
+                ),
+                "INFO",
+            )
+        )
+
+        teacher_models = []
         if cfg.DATASET.TYPE == "imagenet":
-            model_teacher = imagenet_model_dict[cfg.DISTILLER.TEACHER](pretrained=True)
+            for name in teacher_names:
+                teacher_models.append(
+                    imagenet_model_dict[name](pretrained=True)
+                )
             model_student = imagenet_model_dict[cfg.DISTILLER.STUDENT](pretrained=False)
         else:
-            model_dict = tiny_imagenet_model_dict if cfg.DATASET.TYPE == "tiny_imagenet" else cifar_model_dict
-            net, pretrain_model_path = model_dict[cfg.DISTILLER.TEACHER]
-            assert (
-                pretrain_model_path is not None
-            ), "no pretrain model for teacher {}".format(cfg.DISTILLER.TEACHER)
-            model_teacher = net(num_classes=num_classes)
-            model_teacher.load_state_dict(load_checkpoint(pretrain_model_path)["model"])
+            model_dict = (
+                tiny_imagenet_model_dict
+                if cfg.DATASET.TYPE == "tiny_imagenet"
+                else cifar_model_dict
+            )
+            for name in teacher_names:
+                net, pretrain_model_path = model_dict[name]
+                assert (
+                    pretrain_model_path is not None
+                ), "no pretrain model for teacher {}".format(name)
+                model_teacher = net(num_classes=num_classes)
+                model_teacher.load_state_dict(
+                    load_checkpoint(pretrain_model_path)["model"]
+                )
+                teacher_models.append(model_teacher)
             model_student = model_dict[cfg.DISTILLER.STUDENT][0](
                 num_classes=num_classes
             )
+
+        model_teacher = teacher_models[0] if len(teacher_models) == 1 else teacher_models
+
         if cfg.DISTILLER.TYPE == "CRD":
             distiller = distiller_dict[cfg.DISTILLER.TYPE](
                 model_student, model_teacher, cfg, num_data
